@@ -57,15 +57,15 @@ def flops_matvec(rows, cols):
 
 # ----- Planta discreta ----------------------------------
 #
-#                  0.01043
+#                  0.0143 z^-11
 #      ------------------------------------
-#       (z+11) - 1.827*(z+10) + 0.8343(z+9)
+#       1 - 1.827 z^-1 + 0.8343 z^-2
 
 numd = [0.0143]
 dend = [1, -1.827, 0.8343, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 Ts = 0.5
-sistemad = tf(numd, dend)
+sistemad = tf(numd, dend, Ts)
 [B, A] = tfdata(sistemad)
 plantadis = tf(sistemad)
 
@@ -113,19 +113,17 @@ class Timer1:
         self.e_ant2  = self.e_ant1  = self.e_act   = 0
 
         # ---- Construcción de G  --------------------------------
-        self.Matriz_Gt1 = np.matrix(gi[0:Pred]).T          # Pred×1
-        self.T = len(self.Matriz_Gt1)
         self.G = []
 
         for self.a in range(0, N):
-            self.C     = np.zeros((self.a + 1, 1))
-            self.D     = np.matrix(self.Matriz_Gt1[1:self.T - self.a])
+            self.C     = np.zeros((self.a, 1))
+            self.D     = np.matrix(gi[1:Pred - self.a + 1]).T   # g1..g(P-a)
             self.arreglo = np.concatenate((self.C, self.D))
             self.G.append(self.arreglo)
             # FLOPs: concatenar = solo copias, ~0 aritmético
 
         self.G = np.squeeze(np.asarray(self.G))            # N × Pred
-        self.G = self.G.transpose()                        # Pred × N
+        self.G = self.G.transpose()                        # Pred × N, fila i = paso i+1
 
         # ---- Cálculo de Kc  ------------------------------------
         # Kc = inv(G'.delta.G + lambda*I) . G' . delta
@@ -214,7 +212,7 @@ class Timer1:
         #  → 2 mul + 2 mul + 2 sumas + 1 add_ruido  = 7 FLOPs
         tick_flops += 7
 
-        # ym = B*u_ant1 - A[1]*ym_ant1 - A[2]*ym_ant2
+        # ym = B*u_ant11 - A[1]*ym_ant1 - A[2]*ym_ant2
         #  → 3 mul + 2 sumas = 5 FLOPs
         tick_flops += 5
 
@@ -222,12 +220,12 @@ class Timer1:
 
         self.yxm = self.B * self.u_ant11 - self.A[1] * self.ym_ant1 \
                    - self.A[2] * self.ym_ant2 + Ruido * random.randint(-2, 2)
-        self.ym  = self.B * self.u_ant1  - self.A[1] * self.ym_ant1 \
+        self.ym  = self.B * self.u_ant11 - self.A[1] * self.ym_ant1 \
                    - self.A[2] * self.ym_ant2
 
         # ---- Bucle de predicción  ----------------------------
-        # Por cada kk:
-        #   - vect_g: M sumas gi[kk+j]-gi[j]           → M FLOPs
+        # Por cada kk (fila kk = paso de predicción kk+1):
+        #   - vect_g: M restas gi[kk+2+j]-gi[1+j]      → M FLOPs
         #   - H = vect_g @ duf: producto punto (M)      → 2M FLOPs
         #   - ym + H: 1 suma                            → 1 FLOP
         # Total por iteración: 3M + 1
@@ -235,13 +233,9 @@ class Timer1:
         tick_flops += loop_flops
 
         for kk in range(0, Pred):
-            self.vect_g = np.matrix([0])
-            for j in range(0, M):
-                Ma = np.matrix(gi[kk + j] - gi[j])
-                self.vect_g = np.concatenate((Ma, self.vect_g))
-            self.vect_g = self.vect_g[0:M].T
+            self.vect_g = np.matrix(gi[kk + 2:kk + 2 + M] - gi[1:M + 1])
             self.H = np.dot(self.vect_g, self.duf)
-            self.f = np.concatenate((self.ym + self.H, self.f))
+            self.f = np.concatenate((self.f, self.ym + self.H))
 
         # ---- Ley de control  ---------------------------------
         # Vu_act = Kc @ (ref - f)
